@@ -703,16 +703,29 @@ func runUsingChrootExecMain() {
 		}
 		logrus.Debugf("setting supplemental groups")
 		if err = syscall.Setgroups(gids); err != nil {
-			fmt.Fprintf(os.Stderr, "error setting supplemental groups list: %v\n", err)
-			os.Exit(1)
+			// EPERM means the user namespace has setgroups locked (common in Kubernetes with hostUsers=false)
+			// Log a warning but continue - the build can succeed without supplemental groups in many cases
+			if err == syscall.EPERM {
+				logrus.Warnf("setgroups() failed with EPERM - user namespace has locked group management, continuing without supplemental groups")
+			} else {
+				// Other errors are still fatal
+				fmt.Fprintf(os.Stderr, "error setting supplemental groups list: %v\n", err)
+				os.Exit(1)
+			}
 		}
 	} else {
 		setgroups, _ := os.ReadFile("/proc/self/setgroups")
 		if strings.Trim(string(setgroups), "\n") != "deny" {
 			logrus.Debugf("clearing supplemental groups")
 			if err = syscall.Setgroups([]int{}); err != nil {
-				fmt.Fprintf(os.Stderr, "error clearing supplemental groups list: %v\n", err)
-				os.Exit(1)
+				// EPERM means the user namespace has setgroups locked
+				// This is fine - groups are already managed by the namespace
+				if err == syscall.EPERM {
+					logrus.Debugf("setgroups() returned EPERM - user namespace has locked group management (expected in some environments)")
+				} else {
+					fmt.Fprintf(os.Stderr, "error clearing supplemental groups list: %v\n", err)
+					os.Exit(1)
+				}
 			}
 		}
 	}
