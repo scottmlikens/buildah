@@ -77,6 +77,17 @@ func platformSetupContextDirectoryOverlay(store storage.Store, options *define.B
 	targetDir := filepath.Join(contentDir, "target")
 	contextDirMountSpec, err := overlay.MountWithOptions(contentDir, contextDirectoryAbsolute, targetDir, &overlayOptions)
 	if err != nil {
+		// If overlay mount fails (e.g., in locked user namespaces with hostUsers=false),
+		// fall back to using the original context directory without overlay
+		// This is safe because the context directory is typically read-only anyway
+		if errors.Is(err, unix.EINVAL) {
+			logrus.Warnf("overlay mount failed with EINVAL (likely locked user namespace), using context directory directly: %v", err)
+			// Clean up the temporary overlay scaffolding we created
+			cleanup()
+			// Return the original context directory without overlay
+			succeeded = true
+			return contextDirectoryAbsolute, processLabel, mountLabel, false, func() {}, nil
+		}
 		return "", "", "", false, nil, fmt.Errorf("creating overlay scaffolding for build context directory: %w", err)
 	}
 	// going forward, pretend that the merged directory is the actual context directory
